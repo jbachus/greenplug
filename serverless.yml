@@ -12,6 +12,8 @@ provider:
 
 functions:
   greenplug:
+    # Python requires no changes to run on ARM vs x86
+    # arm64 has a higher power efficiency
     architecture: arm64
     memorySize: 128
     handler: handler.run
