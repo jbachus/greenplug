@@ -1,0 +1,24 @@
+service: greenplug
+plugins:
+  - serverless-dotenv-plugin
+  - serverless-python-requirements
+frameworkVersion: '3'
+
+provider:
+  name: aws
+  runtime: python3.10
+  # Sequematic is located in Detroit and ca-central-1 is almost entirely powered by hydro
+  region: ca-central-1
+
+functions:
+  greenplug:
+    architecture: arm64
+    memorySize: 128
+    handler: handler.run
+    events:
+      - schedule:
+          name: hourly
+          rate: rate(1 hour)
+          enabled: true
+    logRetentionInDays: 30
+
