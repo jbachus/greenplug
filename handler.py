@@ -39,7 +39,7 @@ def run(event, context):
 
   min_datapoints = len(data.get(fields[0]).split(','))-1
   for field in fields:
-    parsed_data[field] = data.get(field).split(',')
+    parsed_data[field] = list(filter(None, data.get(field).split(',')))
     if len(parsed_data[field]) < min_datapoints:
       min_datapoints = len(parsed_data[field])-1
 
@@ -93,3 +93,5 @@ def run(event, context):
     if webhook_req.status_code == 200:
       print("Successfully notified sequematic webhook")
       return {"statusCode": 200}
+
+#run({},{})
