@@ -9,6 +9,14 @@ provider:
   runtime: python3.10
   # Sequematic is located in Detroit and ca-central-1 is almost entirely powered by hydro
   region: ca-central-1
+  iam:
+    role:
+      statements:
+        - Effect: Allow
+          Action: 'cloudwatch:PutMetricData'
+          Resource: '*'
+          Condition:
+            StringEquals: {"cloudwatch:namespace": "greenplug"}
 
 functions:
   greenplug:
@@ -19,8 +27,8 @@ functions:
     handler: handler.run
     events:
       - schedule:
-          name: hourly
-          rate: rate(1 hour)
+          name: every15minutes
+          rate: rate(15 minutes)
           enabled: true
     logRetentionInDays: 30
 

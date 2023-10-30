@@ -1,8 +1,12 @@
 import requests
+import datetime
 import os
+import boto3
 from dotenv import load_dotenv
 requests.packages.urllib3.util.ssl_.DEFAULT_CIPHERS += 'DEFAULT:!DH'
+cloudwatch = boto3.client('cloudwatch')
 load_dotenv()
+metrics = []
 
 default_green_energy_threshold = 80
 if os.getenv('GREEN_ENERGY_THRESHOLD'):
@@ -30,6 +34,19 @@ fields = ['LblReadDate',
           'LblForecastData',
           'LblTotalData']
 
+def add_metric(name, value):
+  metrics.append(
+      {
+        'MetricName': name,
+        'Dimensions': [{
+          'Name': 'zone',
+          'Value': 'US-MT-NWE'
+        }],
+        'Timestamp': datetime.datetime.now(),
+        'Value': value
+      }
+  )
+
 def run(event, context):
   #TODO: Make http requests async
   url = 'https://www.northwesternenergy.com/get-electricity-generation'
@@ -50,15 +67,22 @@ def run(event, context):
   generation = green_energy + dirty_energy
   consumption = int(parsed_data['LblForecastData'][min_datapoints])
 
-  #TODO: Plot these as CloudWatch metrics
   print(f"Date: {parsed_data['LblReadDate'][min_datapoints]}")
   print(f"Green: {green_energy}")
+  add_metric('CleanEnergyGeneration', green_energy)
   print(f"Dirty: {dirty_energy}")
-  print(f"Production: {generation}")
+  add_metric('FuelEnergyGeneration', dirty_energy)
   print(f"Consumption: {consumption}")
+  add_metric('Load', consumption)
   print(f"Green Pct Generation: {(green_energy/generation):.0%}")
   print(f"Green Pct Consumption: {(green_energy/consumption):.0%}")
   print(f"Green Energy Threshold: {green_energy_threshold}%")
+
+  # Record CloudWatch Metrics
+  cloudwatch.put_metric_data(
+    Namespace='greenplug',
+    MetricData=metrics
+  )
 
   # Our rule is to turn on switch when green energy exceeds the threshold
   # and generation exceeds consumption
