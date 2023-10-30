@@ -6,7 +6,7 @@ frameworkVersion: '3'
 
 provider:
   name: aws
-  runtime: python3.10
+  runtime: python3.11
   # Sequematic is located in Detroit and ca-central-1 is almost entirely powered by hydro
   region: ca-central-1
   iam:
