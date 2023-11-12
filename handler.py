@@ -1,121 +1,168 @@
-import requests
-import datetime
-import os
-import boto3
-from dotenv import load_dotenv
-requests.packages.urllib3.util.ssl_.DEFAULT_CIPHERS += 'DEFAULT:!DH'
-cloudwatch = boto3.client('cloudwatch')
-load_dotenv()
+from urllib3 import PoolManager
+from os import getenv
+from boto3 import client
+from json import loads
+from datetime import datetime as dt
+from dateutil import tz
+import gzip
+from aws_lambda_powertools import Tracer
+from aws_lambda_powertools.utilities.typing import LambdaContext
+from aws_xray_sdk.core import patch_all
+
+tracer = Tracer()
+patch_all(double_patch=True)
+
+if not getenv("AWS_EXECUTION_ENV"):
+    try:
+        from dotenv import load_dotenv
+
+        load_dotenv()
+    except ImportError:
+        pass
+
+http = PoolManager()
+cloudwatch = client("cloudwatch")
+
 metrics = []
 
 default_green_energy_threshold = 80
-if os.getenv('GREEN_ENERGY_THRESHOLD'):
-  try:
-    green_energy_threshold = int(os.getenv('GREEN_ENERGY_THRESHOLD'))
-    if green_energy_threshold < 0 or green_energy_threshold > 100:
-      raise
-  except:
-    print("GREEN_ENERGY_THRESHOLD must be an integer between 0 and 100.  Default: 80")
+if getenv("GREEN_ENERGY_THRESHOLD"):
+    try:
+        green_energy_threshold = int(getenv("GREEN_ENERGY_THRESHOLD"))
+        if green_energy_threshold < 0 or green_energy_threshold > 100:
+            raise
+    except:
+        print(
+            "GREEN_ENERGY_THRESHOLD must be an integer between 0 and 100.  Default: 80"
+        )
+        exit(1)
+else:
+    green_energy_threshold = default_green_energy_threshold
+
+if getenv("SEQUEMATIC_URL_SUFFIX"):
+    sequematic_url_suffix = getenv("SEQUEMATIC_URL_SUFFIX")
+else:
+    print(
+        "The environment variable SEQUEMATIC_URL_SUFFIX must be set.  Example: 9999/ABCDF0123/variable_name"
+    )
     exit(1)
-else:
-  green_energy_threshold = default_green_energy_threshold
 
-if os.getenv('SEQUEMATIC_URL_SUFFIX'):
-  sequematic_url_suffix = os.getenv('SEQUEMATIC_URL_SUFFIX')
-else:
-  print("The environment variable SEQUEMATIC_URL_SUFFIX must be set.  Example: 9999/ABCDF0123/variable_name")
-  exit(1)
+fields = [
+    "LblReadDate",
+    "LblWindData",
+    "LblHydroData",
+    "LblThermData",
+    "LblSolarData",
+    "LblForecastData",
+    "LblTotalData",
+]
 
-fields = ['LblReadDate',
-          'LblWindData',
-          'LblHydroData',
-          'LblThermData',
-          'LblSolarData',
-          'LblForecastData',
-          'LblTotalData']
 
-def add_metric(name, value):
-  metrics.append(
-      {
-        'MetricName': name,
-        'Dimensions': [{
-          'Name': 'zone',
-          'Value': 'US-MT-NWE'
-        }],
-        'Timestamp': datetime.datetime.now(),
-        'Value': value
-      }
-  )
+def add_metric(name, value, timestamp):
+    metrics.append(
+        {
+            "MetricName": name,
+            "Dimensions": [{"Name": "zone", "Value": "US-MT-NWE"}],
+            "Timestamp": timestamp,
+            "Value": value,
+        }
+    )
 
-def run(event, context):
-  #TODO: Make http requests async
-  url = 'https://www.northwesternenergy.com/get-electricity-generation'
-  response = requests.get(url)
-  data = response.json().get('Data')
-  parsed_data = {}
 
-  min_datapoints = len(data.get(fields[0]).split(','))-1
-  for field in fields:
-    parsed_data[field] = list(filter(None, data.get(field).split(',')))
-    if len(parsed_data[field]) < min_datapoints:
-      min_datapoints = len(parsed_data[field])-1
+def run():
+    # TODO: Make http requests async
+    url = "https://www.northwesternenergy.com/get-electricity-generation"
+    headers = {"Accept-Encoding": "gzip"}
+    response = http.request("GET", url, headers=headers)
+    data = loads(response.data.decode()).get("Data")
+    ts_data = {}
+    last_reading = {}
+    index = 0
 
-  green_energy = int(parsed_data['LblWindData'][min_datapoints]) + \
-                int(parsed_data['LblHydroData'][min_datapoints]) + \
-                int(parsed_data['LblSolarData'][min_datapoints])
-  dirty_energy = int(parsed_data['LblThermData'][min_datapoints])
-  generation = green_energy + dirty_energy
-  consumption = int(parsed_data['LblForecastData'][min_datapoints])
+    for field in fields:
+        ts_data[field] = data[field].split(",")
+        if not ts_data[field][-1]:
+            ts_data[field].pop()
+        if field == "LblReadDate":
+            index = len(ts_data["LblReadDate"]) - 1
+        last_reading[field] = ts_data[field][index]
 
-  print(f"Date: {parsed_data['LblReadDate'][min_datapoints]}")
-  print(f"Green: {green_energy}")
-  add_metric('CleanEnergyGeneration', green_energy)
-  print(f"Dirty: {dirty_energy}")
-  add_metric('FuelEnergyGeneration', dirty_energy)
-  print(f"Consumption: {consumption}")
-  add_metric('Load', consumption)
-  print(f"Green Pct Generation: {(green_energy/generation):.0%}")
-  print(f"Green Pct Consumption: {(green_energy/consumption):.0%}")
-  print(f"Green Energy Threshold: {green_energy_threshold}%")
+    green_energy = (
+        int(last_reading["LblWindData"])
+        + int(last_reading["LblHydroData"])
+        + int(last_reading["LblSolarData"])
+    )
+    dirty_energy = int(last_reading["LblThermData"])
+    generation = int(last_reading["LblTotalData"])
+    consumption = int(last_reading["LblForecastData"])
+    timestamp = dt.strptime(last_reading["LblReadDate"], "%m/%d/%y %H:%M").replace(
+        tzinfo=tz.gettz("America/Denver")
+    )
 
-  # Record CloudWatch Metrics
-  cloudwatch.put_metric_data(
-    Namespace='greenplug',
-    MetricData=metrics
-  )
+    print(f"Date: {timestamp.strftime('%m/%d/%y %H:%M %Z')}")
+    print(f"Green: {green_energy}")
+    add_metric("CleanEnergyGeneration", green_energy, timestamp)
+    print(f"Dirty: {dirty_energy}")
+    add_metric("FuelEnergyGeneration", dirty_energy, timestamp)
+    print(f"Consumption: {consumption}")
+    add_metric("Load", consumption, timestamp)
+    print(f"Green Pct Generation: {(green_energy/generation):.0%}")
+    print(f"Green Pct Consumption: {(green_energy/consumption):.0%}")
+    print(f"Green Energy Threshold: {green_energy_threshold}%")
 
-  # Our rule is to turn on switch when green energy exceeds the threshold
-  # and generation exceeds consumption
+    # Record CloudWatch Metrics
+    cloudwatch.put_metric_data(Namespace="greenplug", MetricData=metrics)
 
-  switch_desired_on = False
-  green_energy_pct = int(round((green_energy/consumption)*100,0))
-  if generation > consumption and green_energy_pct >= green_energy_threshold:
-    print("Recommend Switch ON")
-    switch_desired_on = True
-  else:
-    print("Recommend switch OFF")
+    # Our rule is to turn on switch when green energy exceeds the threshold
+    # and generation exceeds consumption
 
-  switch_is_on = False
-  try:
-    current_status_req = requests.get(f"https://sequematic.com/variable-get/{sequematic_url_suffix}")
-    switch_is_on = bool(int(current_status_req.text))
-    if switch_is_on:
-      print("Switch is currently ON")
+    switch_desired_on = False
+    green_energy_pct = int(round((green_energy / consumption) * 100, 0))
+    if generation > consumption and green_energy_pct >= green_energy_threshold:
+        print("Recommend Switch ON")
+        switch_desired_on = True
     else:
-      print("Switch is currently OFF")
-  except:
-    print("Unable to get switch status")
-    return {"statusCode": 500}
+        print("Recommend switch OFF")
 
-  if switch_is_on is not switch_desired_on:
-    if switch_desired_on:
-      print("Turning switch ON")
-      webhook_req = requests.get(f"https://sequematic.com/variable-change/{sequematic_url_suffix}/=1")
+    switch_is_on = False
+    try:
+        current_status_req = http.request(
+            "GET", f"https://sequematic.com/variable-get/{sequematic_url_suffix}"
+        )
+        switch_is_on = bool(int(current_status_req.data.decode()))
+        if switch_is_on:
+            print("Switch is currently ON")
+        else:
+            print("Switch is currently OFF")
+    except:
+        print("Unable to get switch status")
+        return {"statusCode": 500}
+
+    if switch_is_on is not switch_desired_on:
+        if switch_desired_on:
+            print("Turning switch ON")
+            webhook_req = http.request(
+                "GET",
+                f"https://sequematic.com/variable-change/{sequematic_url_suffix}/=1",
+            )
+        else:
+            print("Turning switch OFF")
+            webhook_req = http.request(
+                "GET",
+                f"https://sequematic.com/variable-change/{sequematic_url_suffix}/=0",
+            )
+        if webhook_req.status == 200:
+            print("Successfully notified sequematic webhook")
+            return {"statusCode": 200}
     else:
-      print("Turning switch OFF")
-      webhook_req = requests.get(f"https://sequematic.com/variable-change/{sequematic_url_suffix}/=0")
-    if webhook_req.status_code == 200:
-      print("Successfully notified sequematic webhook")
-      return {"statusCode": 200}
+        print("Nothing to do")
+        return {"statusCode": 200}
 
-#run({},{})
+
+@tracer.capture_lambda_handler
+def lambda_handler(event, context):
+    return run()
+
+
+if __name__ == "__main__":
+    run()

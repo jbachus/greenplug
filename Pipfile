@@ -4,11 +4,12 @@ verify_ssl = true
 name = "pypi"
 
 [packages]
-requests = "*"
-python-dotenv = "*"
-urllib3 = "<2"
 
 [dev-packages]
+boto3 = "*"
+python-dotenv = "*"
+urllib3 = "*"
+aws-lambda-powertools = {version = "*", extras = ["all"]}
 
 [requires]
 python_version = "3.11"

@@ -3,9 +3,19 @@ plugins:
   - serverless-dotenv-plugin
   - serverless-python-requirements
 frameworkVersion: '3'
+package:
+  patterns:
+    - '!.venv/**'
+    - '!node_modules/**'
+    - '!package*.json'
+    - '!README.md'
+    - '!Pipfile*'
+    - '!requirements.txt'
 
 provider:
   name: aws
+  tracing:
+    lambda: true
   runtime: python3.11
   # Sequematic is located in Detroit and ca-central-1 is almost entirely powered by hydro
   region: ca-central-1
@@ -17,6 +27,11 @@ provider:
           Resource: '*'
           Condition:
             StringEquals: {"cloudwatch:namespace": "greenplug"}
+        - Effect: Allow
+          Action:
+            - xray:PutTraceSegments
+            - xray:PutTelemetryRecords
+          Resource: '*'
 
 functions:
   greenplug:
@@ -24,11 +39,15 @@ functions:
     # arm64 has a higher power efficiency
     architecture: arm64
     memorySize: 128
-    handler: handler.run
+    handler: handler.lambda_handler
     events:
       - schedule:
           name: every15minutes
           rate: rate(15 minutes)
           enabled: true
+    environment:
+      POWERTOOLS_SERVICE_NAME: greenplug
     logRetentionInDays: 30
-
+    tracing: Active
+    layers:
+      - arn:aws:lambda:ca-central-1:017000801446:layer:AWSLambdaPowertoolsPythonV2-Arm64:47
