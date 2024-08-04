@@ -39,11 +39,11 @@ if getenv("GREEN_ENERGY_THRESHOLD"):
 else:
     green_energy_threshold = default_green_energy_threshold
 
-if getenv("SEQUEMATIC_URL_SUFFIX"):
-    sequematic_url_suffix = getenv("SEQUEMATIC_URL_SUFFIX")
+if getenv("SEQUEMATIC_SWITCH_URL_SUFFIX"):
+    SEQUEMATIC_SWITCH_URL_SUFFIX = getenv("SEQUEMATIC_SWITCH_URL_SUFFIX")
 else:
     print(
-        "The environment variable SEQUEMATIC_URL_SUFFIX must be set.  Example: 9999/ABCDF0123/variable_name"
+        "The environment variable SEQUEMATIC_SWITCH_URL_SUFFIX must be set.  Example: 9999/ABCDF0123/variable_name"
     )
     exit(1)
 
@@ -118,7 +118,18 @@ def run():
 
     switch_desired_on = False
     green_energy_pct = int(round((green_energy / consumption) * 100, 0))
-    if generation > consumption and green_energy_pct >= green_energy_threshold:
+
+    if getenv("SEQUEMATIC_VALUE_URL_SUFFIX"):
+        SEQUEMATIC_VALUE_URL_SUFFIX = getenv("SEQUEMATIC_VALUE_URL_SUFFIX")
+        value = str(green_energy_pct)
+        update_var_request = http.request(
+            "GET",
+            f"https://sequematic.com/variable-change/{SEQUEMATIC_VALUE_URL_SUFFIX}/={value}"
+        )
+        if update_var_request.status == 200:
+            print("Successfully updated green energy value variable")
+
+    if green_energy_pct >= green_energy_threshold:
         print("Recommend Switch ON")
         switch_desired_on = True
     else:
@@ -127,7 +138,7 @@ def run():
     switch_is_on = False
     try:
         current_status_req = http.request(
-            "GET", f"https://sequematic.com/variable-get/{sequematic_url_suffix}"
+            "GET", f"https://sequematic.com/variable-get/{SEQUEMATIC_SWITCH_URL_SUFFIX}"
         )
         switch_is_on = bool(int(current_status_req.data.decode()))
         if switch_is_on:
@@ -143,13 +154,13 @@ def run():
             print("Turning switch ON")
             webhook_req = http.request(
                 "GET",
-                f"https://sequematic.com/variable-change/{sequematic_url_suffix}/=1",
+                f"https://sequematic.com/variable-change/{SEQUEMATIC_SWITCH_URL_SUFFIX}/=1",
             )
         else:
             print("Turning switch OFF")
             webhook_req = http.request(
                 "GET",
-                f"https://sequematic.com/variable-change/{sequematic_url_suffix}/=0",
+                f"https://sequematic.com/variable-change/{SEQUEMATIC_SWITCH_URL_SUFFIX}/=0",
             )
         if webhook_req.status == 200:
             print("Successfully notified sequematic webhook")

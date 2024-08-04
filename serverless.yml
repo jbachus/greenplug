@@ -42,8 +42,8 @@ functions:
     handler: handler.lambda_handler
     events:
       - schedule:
-          name: every15minutes
-          rate: rate(15 minutes)
+          name: every1hour
+          rate: cron(7 * * * ? *)
           enabled: true
     environment:
       POWERTOOLS_SERVICE_NAME: greenplug
